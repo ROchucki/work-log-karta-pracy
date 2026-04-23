@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1220" />
+<title>Notebook – Work Log</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/favicon.png" />
+<link rel="apple-touch-icon" href="icons/icon-180.png" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- OKŁADKA -->
+<section id="view-cover" class="view view-cover active">
+  <div class="cover-inner">
+    <img class="cover-img" src="assets/cover.jpg" alt="Notebook Work Log" />
+    <div class="cover-actions">
+      <button class="btn primary" data-go="new">+ Nowy wpis</button>
+      <button class="btn" data-go="table">Tabela</button>
+      <button class="btn" data-go="settings">Ustawienia</button>
+    </div>
+    <div class="cover-hint">Przeciągnij w dół, aby dodać do ekranu głównego (menu przeglądarki → „Dodaj do ekranu głównego”).</div>
+  </div>
+</section>
+
+<!-- NOWY WPIS -->
+<section id="view-new" class="view">
+  <header class="topbar">
+    <button class="icon-btn" data-go="cover" aria-label="Wróć">←</button>
+    <h1>Nowy wpis</h1>
+    <button class="icon-btn" data-go="table" aria-label="Tabela">☰</button>
+  </header>
+
+  <form id="entry-form" class="form">
+    <label>Data
+      <input type="date" name="data" required />
+    </label>
+
+    <div class="row-2">
+      <label>Godz. od
+        <input type="time" name="godz_od" required />
+      </label>
+      <label>Godz. do
+        <input type="time" name="godz_do" required />
+      </label>
+    </div>
+    <div class="hint"><span id="hours-sum">Godziny: —</span></div>
+
+    <label>Projekt
+      <input type="text" name="projekt" list="dl-projekt" autocomplete="off" />
+      <datalist id="dl-projekt"></datalist>
+    </label>
+
+    <label>Mieszkanie
+      <input type="text" name="mieszkanie" list="dl-mieszkanie" autocomplete="off" />
+      <datalist id="dl-mieszkanie"></datalist>
+    </label>
+
+    <label>Rodzaj wykonywanych prac
+      <textarea name="rodzaj" rows="3" placeholder="Wpisz lub użyj skrótu (np. 'okno' → wybierz z podpowiedzi)"></textarea>
+      <div id="shortcut-suggestions" class="chips"></div>
+    </label>
+
+    <div class="row-2">
+      <button type="button" class="btn" id="btn-duplicate">Duplikuj ostatni</button>
+      <button type="submit" class="btn primary">Zapisz</button>
+    </div>
+  </form>
+</section>
+
+<!-- TABELA -->
+<section id="view-table" class="view">
+  <header class="topbar">
+    <button class="icon-btn" data-go="cover" aria-label="Wróć">←</button>
+    <h1>Tabela</h1>
+    <button class="icon-btn" data-go="new" aria-label="Dodaj">+</button>
+  </header>
+
+  <div class="filters">
+    <input type="text" id="filter-q" placeholder="Szukaj (projekt, mieszkanie, prace)..." />
+    <div class="row-2">
+      <input type="date" id="filter-from" />
+      <input type="date" id="filter-to" />
+    </div>
+    <div class="summary" id="summary">Wpisów: 0 · Godziny: 0</div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>Data</th><th>Godz.</th><th>Projekt</th><th>Mieszkanie</th><th>Prace</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="export-bar">
+    <button class="btn" id="btn-export-xlsx">Pobierz .xlsx</button>
+    <button class="btn" id="btn-export-csv">Pobierz .csv</button>
+    <button class="btn primary" id="btn-email">Wyślij mailem</button>
+    <button class="btn" id="btn-onedrive">Zapisz w OneDrive</button>
+  </div>
+</section>
+
+<!-- USTAWIENIA -->
+<section id="view-settings" class="view">
+  <header class="topbar">
+    <button class="icon-btn" data-go="cover" aria-label="Wróć">←</button>
+    <h1>Ustawienia</h1>
+    <span></span>
+  </header>
+
+  <div class="form">
+    <label>Imię (domyślne)
+      <input type="text" id="set-imie" placeholder="np. Jan" />
+    </label>
+
+    <label>E-mail do wysyłki backupu
+      <input type="email" id="set-email" placeholder="np. ty@proton.me" />
+    </label>
+
+    <label>Folder OneDrive
+      <input type="text" id="set-onedrive-folder" value="/Work Log" />
+      <div class="hint">Plik karta-pracy.xlsx będzie tam nadpisywany po każdym zapisie.</div>
+    </label>
+
+    <div class="row-2">
+      <button type="button" class="btn" id="btn-onedrive-connect">Połącz OneDrive</button>
+      <button type="button" class="btn" id="btn-onedrive-disconnect">Rozłącz</button>
+    </div>
+    <div id="onedrive-status" class="hint">OneDrive: niepołączony</div>
+
+    <hr />
+
+    <h3>Skróty słów-kluczy</h3>
+    <div class="hint">Wpisujesz np. <code>okno</code> w polu „Rodzaj prac”, a aplikacja pokaże podpowiedzi zdefiniowane tutaj. Skróty można też dodać jednym kliknięciem z formularza wpisu.</div>
+
+    <div id="shortcuts-list" class="shortcuts-list"></div>
+
+    <div class="row-2">
+      <input type="text" id="new-shortcut-key" placeholder="Słowo-klucz (np. okno)" />
+      <input type="text" id="new-shortcut-val" placeholder="Rozwinięcie (np. regulacja okna)" />
+    </div>
+    <button type="button" class="btn primary" id="btn-add-shortcut">Dodaj rozwinięcie</button>
+
+    <hr />
+
+    <h3>Dane</h3>
+    <div class="row-2">
+      <button type="button" class="btn" id="btn-import">Importuj .json</button>
+      <button type="button" class="btn" id="btn-backup">Zapisz backup .json</button>
+    </div>
+    <input type="file" id="import-file" accept=".json" hidden />
+    <button type="button" class="btn danger" id="btn-wipe">Wyczyść wszystkie wpisy</button>
+  </div>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+<script data-pplx-inline-edit>
+(function(){
+  if(window===window.top)return;
+  function inlineAll(orig,clone){
+    if(orig.nodeType!==1)return;
+    try{
+      var cs=getComputedStyle(orig);
+      var t='';
+      for(var i=0;i<cs.length;i++){t+=cs[i]+':'+cs.getPropertyValue(cs[i])+';';}
+      clone.style.cssText=t;
+    }catch(e){}
+    var oc=orig.children,cc=clone.children;
+    for(var j=0;j<oc.length&&j<cc.length;j++){inlineAll(oc[j],cc[j]);}
+  }
+  function stripExternal(clone){
+    var imgs=clone.querySelectorAll('img');
+    for(var i=0;i<imgs.length;i++){
+      var s=imgs[i].getAttribute('src');
+      if(s&&!s.startsWith('data:'))imgs[i].removeAttribute('src');
+    }
+    var all=clone.querySelectorAll('*');
+    for(var i=0;i<all.length;i++){
+      var st=all[i].style.cssText;
+      if(st&&st.indexOf('url(')>=0){
+        all[i].style.cssText=st.replace(/url\(["']?(?!data:)[^)"']*["']?\)/gi,'none');
+      }
+    }
+  }
+  var scrollRaf=0;
+  function emitScroll(){
+    scrollRaf=0;
+    var x=window.scrollX||window.pageXOffset||0;
+    var y=window.scrollY||window.pageYOffset||0;
+    window.parent.postMessage({type:'INLINE_EDIT_SCROLL',scrollX:x,scrollY:y},'*');
+  }
+  window.addEventListener('scroll',function(){
+    if(scrollRaf)return;
+    scrollRaf=requestAnimationFrame(emitScroll);
+  },{passive:true,capture:true});
+  emitScroll();
+  window.addEventListener('message',function(e){
+    if(!e.data||e.data.type!=='INLINE_EDIT_CAPTURE_REQUEST')return;
+    var scrollX=window.scrollX||window.pageXOffset||0;
+    var scrollY=window.scrollY||window.pageYOffset||0;
+    var w=window.innerWidth,h=window.innerHeight;
+    try{
+      var clone=document.documentElement.cloneNode(true);
+      var rm=clone.querySelectorAll('script,link[rel="stylesheet"],style');
+      for(var i=0;i<rm.length;i++){rm[i].remove();}
+      inlineAll(document.documentElement,clone);
+      stripExternal(clone);
+      var html=new XMLSerializer().serializeToString(clone);
+      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'">'
+        +'<foreignObject width="100%" height="100%">'
+        +'<div xmlns="http://www.w3.org/1999/xhtml" style="width:'+w+'px;height:'+h+'px;overflow:hidden">'
+        +'<div style="transform:translate(-'+scrollX+'px,-'+scrollY+'px);transform-origin:top left">'
+        +html+'</div></div></foreignObject></svg>';
+      var svgUrl='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+      var img=new Image();
+      img.onload=function(){
+        var c=document.createElement('canvas');c.width=w;c.height=h;
+        c.getContext('2d').drawImage(img,0,0);
+        window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:c.toDataURL('image/png'),scrollX:scrollX,scrollY:scrollY},'*');
+      };
+      img.onerror=function(){
+        window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:null,scrollX:scrollX,scrollY:scrollY},'*');
+      };
+      img.src=svgUrl;
+    }catch(err){
+      window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:null,scrollX:scrollX,scrollY:scrollY},'*');
+    }
+  });
+})();
+</script></body>
+</html>
