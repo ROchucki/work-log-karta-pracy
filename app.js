@@ -11,16 +11,23 @@ if ('serviceWorker' in navigator) {
 // ====== Toast ======
 const toastEl = document.getElementById('toast');
 function toast(msg, ms=2200) {
-  toastEl.textContent = msg;
-  toastEl.hidden = false;
-  clearTimeout(toast._t);
-  toast._t = setTimeout(() => toastEl.hidden = true, ms);
+  if (!toastEl) { // fallback do console gdy element nie istnieje
+    console.log('toast:', msg);
+    return;
+  }
+  try {
+    toastEl.textContent = msg;
+    toastEl.hidden = false;
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toastEl.hidden = true, ms);
+  } catch (err) { console.error('toast error', err); }
 }
 
 // ====== Nawigacja widoków ======
 function show(view) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById('view-' + view).classList.add('active');
+  const el = document.getElementById('view-' + view);
+  if (el) el.classList.add('active');
   window.scrollTo({top:0});
   if (view === 'table') renderTable();
   if (view === 'new')   prepareForm();
@@ -184,24 +191,29 @@ document.getElementById('btn-duplicate').addEventListener('click', async () => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const entry = {
-    imie: await getSetting('imie', ''),
-    data: form.data.value,
-    godz_od: form.godz_od.value,
-    godz_do: form.godz_do.value,
-    minuty: minutesBetween(form.godz_od.value, form.godz_do.value),
-    projekt: form.projekt.value.trim(),
-    mieszkanie: form.mieszkanie.value.trim(),
-    rodzaj: form.rodzaj.value.trim(),
-    created: new Date().toISOString()
-  };
-  if (!entry.data || !entry.godz_od || !entry.godz_do) { toast('Uzupełnij datę i godziny'); return; }
-  await idbPut('entries', entry);
-  form.reset();
-  prepareForm();
-  toast('Zapisano');
-  // auto-sync OneDrive (jeśli połączony)
-  maybeAutoSyncOneDrive();
+  try {
+    const entry = {
+      imie: await getSetting('imie', ''),
+      data: form.data.value,
+      godz_od: form.godz_od.value,
+      godz_do: form.godz_do.value,
+      minuty: minutesBetween(form.godz_od.value, form.godz_do.value),
+      projekt: form.projekt.value.trim(),
+      mieszkanie: form.mieszkanie.value.trim(),
+      rodzaj: form.rodzaj.value.trim(),
+      created: new Date().toISOString()
+    };
+    if (!entry.data || !entry.godz_od || !entry.godz_do) { toast('Uzupełnij datę i godziny'); return; }
+    await idbPut('entries', entry);
+    form.reset();
+    await prepareForm();
+    toast('Zapisano');
+    // auto-sync OneDrive (jeśli połączony)
+    maybeAutoSyncOneDrive();
+  } catch (err) {
+    console.error('Błąd podczas zapisu wpisu:', err);
+    toast('Błąd zapisu: ' + (err && err.message ? err.message : err));
+  }
 });
 
 // ====== Tabela ======
@@ -303,7 +315,7 @@ document.getElementById('btn-email').addEventListener('click', async () => {
   }
   // 2) Fallback: pobierz plik + otwórz mailto (załącznik trzeba dodać ręcznie)
   download(blob, file.name);
-  const mailto = `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\\n\\n(Dodaj pobrany plik jako załącznik.)')}`;
+  const mailto = `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\n\n(Dodaj pobrany plik jako załącznik.)')}`;
   location.href = mailto;
 });
 
@@ -324,19 +336,24 @@ async function onedriveLogin() {
   let clientId = await getSetting(MSAL_CLIENT_ID_KEY);
   if (!clientId) {
     clientId = prompt(
-      'Aby łączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\\n\\nJeśli nie masz, możesz to pominąć i używać tylko e-maila/eksportu.'
+      'Aby połączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\n\n' +
+      'Jeśli nie masz Client ID, możesz pominąć (anulować) i używać ręcznego eksportu/backupów.'
     );
     if (!clientId) return null;
     await setSetting(MSAL_CLIENT_ID_KEY, clientId.trim());
   }
+
   // MSAL implicit flow w oknie popup
   const redirect = location.origin + location.pathname;
   const state = Math.random().toString(36).slice(2);
   const nonce = Math.random().toString(36).slice(2);
+  // scope musimy zakodować w URL jednorazowo
   const scope = encodeURIComponent('Files.ReadWrite offline_access openid profile');
-  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirect)}&scope=${scope}&state=${state}&nonce=${nonce}&response_mode=fragment`;
+  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirect)}&scope=${scope}&state=${encodeURIComponent(state)}&nonce=${encodeURIComponent(nonce)}&response_mode=fragment`;
+
   const w = window.open(url, 'onedrive_login', 'width=480,height=720');
   if (!w) { toast('Popup zablokowany'); return null; }
+
   return new Promise(resolve => {
     const t = setInterval(async () => {
       try {
@@ -370,6 +387,10 @@ async function onedriveUpload(blob, filename) {
 async function maybeAutoSyncOneDrive() {
   const tok = await getSetting(MSAL_TOKEN_KEY);
   if (!tok) return;
+  if (typeof XLSX === 'undefined') {
+    console.warn('maybeAutoSyncOneDrive: XLSX not loaded, skipping auto-sync');
+    return;
+  }
   try {
     const blob = await exportBlob('xlsx');
     await onedriveUpload(blob, 'karta-pracy.xlsx');
@@ -480,7 +501,7 @@ document.getElementById('btn-wipe').addEventListener('click', async () => {
 
 // ====== Utils ======
 function escapeHTML(s) {
-  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  return String(s||'').replace(/[&<>"'] /g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 }
 
 // ====== Start ======
