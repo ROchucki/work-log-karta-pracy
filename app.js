@@ -303,7 +303,7 @@ document.getElementById('btn-email').addEventListener('click', async () => {
   }
   // 2) Fallback: pobierz plik + otwórz mailto (załącznik trzeba dodać ręcznie)
   download(blob, file.name);
-  const mailto = `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\\n\\n(Dodaj pobrany plik jako załącznik.)')}`;
+  const mailto = `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\n\n(Dodaj pobrany plik jako załącznik.)')}`;
   location.href = mailto;
 });
 
@@ -324,17 +324,23 @@ async function onedriveLogin() {
   let clientId = await getSetting(MSAL_CLIENT_ID_KEY);
   if (!clientId) {
     clientId = prompt(
-      'Aby łączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\\n\\nJeśli nie masz, możesz to pominąć i używać tylko e-maila/eksportu.'
+      'Aby łączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\n\nJeśli nie masz, możesz to pominąć i używać eksportu lokalnego.'
     );
     if (!clientId) return null;
     await setSetting(MSAL_CLIENT_ID_KEY, clientId.trim());
   }
-  // MSAL implicit flow w oknie popup
+  // MSAL implicit flow w oknie popup (uwaga: implicit flow jest mniej bezpieczny — rozważ Authorization Code + PKCE)
   const redirect = location.origin + location.pathname;
   const state = Math.random().toString(36).slice(2);
   const nonce = Math.random().toString(36).slice(2);
-  const scope = encodeURIComponent('Files.ReadWrite offline_access openid profile');
-  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(clientId)}&response_type=token&redirect_uri=${encodeURIComponent(redirect)}&scope=${scope}&state=${state}&nonce=${nonce}&response_mode=fragment`;
+  const scope = 'Files.ReadWrite offline_access openid profile';
+  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` +
+              `?client_id=${encodeURIComponent(clientId)}` +
+              `&response_type=token` +
+              `&redirect_uri=${encodeURIComponent(redirect)}` +
+              `&scope=${encodeURIComponent(scope)}` +
+              `&state=${encodeURIComponent(state)}` +
+              `&nonce=${encodeURIComponent(nonce)}`;
   const w = window.open(url, 'onedrive_login', 'width=480,height=720');
   if (!w) { toast('Popup zablokowany'); return null; }
   return new Promise(resolve => {
