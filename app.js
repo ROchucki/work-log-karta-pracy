@@ -1,12 +1,29 @@
 /* Notebook – Work Log
    PWA do szybkiego zapisu karty pracy.
-   Dane lokalne w IndexedDB. Eksport .xlsx/.csv. Backup: email (Web Share / mailto) + OneDrive (MS Graph).
+   Dane lokalne w IndexedDB + GitHub. Eksport .xlsx/.csv. Backup: email (Web Share / mailto) + OneDrive (MS Graph).
 */
 
 // ====== Service worker ======
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
 }
+
+// ====== Theme Toggle ======
+const THEME_KEY = 'worklog_theme';
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY) || 'dark';
+  document.body.classList.toggle('light-mode', saved === 'light');
+}
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light-mode');
+  localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+  toast(isLight ? '☀️ Tryb jasny' : '🌙 Tryb ciemny');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
+  const themeBtn = document.querySelector('.theme-toggle');
+  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+});
 
 // ====== Toast ======
 const toastEl = document.getElementById('toast');
@@ -30,7 +47,7 @@ document.querySelectorAll('[data-go]').forEach(el => {
   el.addEventListener('click', () => show(el.dataset.go));
 });
 
-// ====== IndexedDB ======
+// ====== IndexedDB (Cache lokalny) ======
 const DB_NAME = 'worklog';
 const DB_VER = 1;
 let db;
@@ -40,12 +57,11 @@ function openDB() {
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains('entries')) {
-        const s = d.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
+        const s = d.createObjectStore('entries', { keyPath: 'id', autoIncrement: false });
         s.createIndex('data', 'data');
       }
       if (!d.objectStoreNames.contains('settings')) d.createObjectStore('settings', { keyPath: 'k' });
       if (!d.objectStoreNames.contains('shortcuts')) {
-        // shortcuts: { id, key, value }
         const s = d.createObjectStore('shortcuts', { keyPath: 'id', autoIncrement: true });
         s.createIndex('key', 'key');
       }
@@ -105,7 +121,7 @@ function minutesBetween(from, to) {
   const [fh,fm] = from.split(':').map(Number);
   const [th,tm] = to.split(':').map(Number);
   let m = (th*60+tm) - (fh*60+fm);
-  if (m < 0) m += 24*60; // jeżeli przejście przez północ
+  if (m < 0) m += 24*60;
   return m;
 }
 function formatH(minutes) {
@@ -114,15 +130,29 @@ function formatH(minutes) {
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 function hoursDecimal(minutes) { return Math.round((minutes/60)*100)/100; }
+function escapeHTML(s) {
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+}
+
+// ====== Validacja ======
+function validateEntry(entry) {
+  const errors = [];
+  if (!entry.data) errors.push('Data jest wymagana');
+  if (!entry.godz_od) errors.push('Godzina od jest wymagana');
+  if (!entry.godz_do) errors.push('Godzina do jest wymagana');
+  if (entry.godz_od && entry.godz_do) {
+    const mins = minutesBetween(entry.godz_od, entry.godz_do);
+    if (mins === 0) errors.push('Godzina zakończenia musi być później niż rozpoczęcia');
+  }
+  return errors;
+}
 
 // ====== Formularz ======
 const form = document.getElementById('entry-form');
 const hoursSum = document.getElementById('hours-sum');
 
 async function prepareForm() {
-  // data = dzisiaj
   form.data.value = todayISO();
-  // podpowiedzi z wcześniejszych wpisów
   const entries = await idbAll('entries');
   const uniq = (arr) => [...new Set(arr.filter(Boolean))];
   const fillDL = (id, vals) => {
@@ -155,9 +185,7 @@ function updateShortcutSuggestions() {
     `<span class="chip" data-key="${escapeHTML(s.key)}" data-val="${escapeHTML(s.value)}">+ ${escapeHTML(s.value)}</span>`
   ).join('');
   suggBox.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-    // podmień ostatnie słowo na rozwinięcie
     const parts = rodzajEl.value.split(/(\s+)/);
-    // znajdź ostatni nie-whitespace i zamień
     for (let i = parts.length-1; i >= 0; i--) {
       if (parts[i].trim()) { parts[i] = c.dataset.val; break; }
     }
@@ -171,20 +199,21 @@ rodzajEl.addEventListener('input', updateShortcutSuggestions);
 // duplikuj ostatni
 document.getElementById('btn-duplicate').addEventListener('click', async () => {
   const all = await idbAll('entries');
-  if (!all.length) { toast('Brak wpisów do zduplikowania'); return; }
+  if (!all.length) { toast('❌ Brak wpisów do zduplikowania'); return; }
   const last = all[all.length-1];
   form.projekt.value = last.projekt || '';
   form.mieszkanie.value = last.mieszkanie || '';
   form.rodzaj.value = last.rodzaj || '';
-  form.godz_od.value = last.godz_do || last.godz_od || ''; // start tam, gdzie skończył ostatni
+  form.godz_od.value = last.godz_do || last.godz_od || '';
   form.godz_do.value = '';
   updateHoursSum();
-  toast('Zduplikowano – zmień godziny/opis i zapisz');
+  toast('✅ Zduplikowano – zmień godziny/opis i zapisz');
 });
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const entry = {
+    id: Date.now().toString(),
     imie: await getSetting('imie', ''),
     data: form.data.value,
     godz_od: form.godz_od.value,
@@ -193,15 +222,30 @@ form.addEventListener('submit', async (e) => {
     projekt: form.projekt.value.trim(),
     mieszkanie: form.mieszkanie.value.trim(),
     rodzaj: form.rodzaj.value.trim(),
-    created: new Date().toISOString()
+    created: new Date().toISOString(),
+    updated: new Date().toISOString()
   };
-  if (!entry.data || !entry.godz_od || !entry.godz_do) { toast('Uzupełnij datę i godziny'); return; }
+  
+  const errors = validateEntry(entry);
+  if (errors.length) { toast('❌ ' + errors[0]); return; }
+  
   await idbPut('entries', entry);
+  
+  const token = await getSetting('github_token');
+  if (token) {
+    try {
+      await GITHUB_DB.setToken(token);
+      await GITHUB_DB.addEntry(entry);
+      toast('✅ Zapisano (GitHub + Local)');
+    } catch (e) {
+      toast('✅ Zapisano lokalnie (GitHub offline)');
+    }
+  } else {
+    toast('✅ Zapisano lokalnie');
+  }
+  
   form.reset();
   prepareForm();
-  toast('Zapisano');
-  // auto-sync OneDrive (jeśli połączony)
-  maybeAutoSyncOneDrive();
 });
 
 // ====== Tabela ======
@@ -229,15 +273,28 @@ async function renderTable() {
       <td>${escapeHTML(r.projekt||'')}</td>
       <td>${escapeHTML(r.mieszkanie||'')}</td>
       <td>${escapeHTML(r.rodzaj||'')}</td>
-      <td><button class="del" aria-label="Usuń">✕</button></td>
+      <td><button type="button" class="edit" aria-label="Edytuj" title="Edytuj">✎</button><button type="button" class="del" aria-label="Usuń" title="Usuń">✕</button></td>
     </tr>
   `).join('');
+  
   tbody.querySelectorAll('tr').forEach(tr => {
+    const id = tr.dataset.id;
+    tr.querySelector('.edit').addEventListener('click', async () => {
+      const entry = await idbGet('entries', id);
+      if (entry) openEditModal(entry);
+    });
     tr.querySelector('.del').addEventListener('click', async () => {
       if (!confirm('Usunąć wpis?')) return;
-      await idbDel('entries', Number(tr.dataset.id));
+      await idbDel('entries', id);
+      const token = await getSetting('github_token');
+      if (token) {
+        try {
+          await GITHUB_DB.setToken(token);
+          await GITHUB_DB.deleteEntry(id);
+        } catch (e) { }
+      }
       renderTable();
-      toast('Usunięto');
+      toast('✅ Usunięto');
     });
   });
 
@@ -245,6 +302,76 @@ async function renderTable() {
   summary.textContent = `Wpisów: ${rows.length} · Godziny: ${formatH(totalMin)}`;
 }
 [filterQ, filterFrom, filterTo].forEach(el => el.addEventListener('input', renderTable));
+
+// ====== Edit Modal ======
+const editModal = document.getElementById('edit-modal');
+const editForm = document.getElementById('edit-form');
+
+function openEditModal(entry) {
+  editForm['entry-id'].value = entry.id;
+  editForm.data.value = entry.data;
+  editForm.godz_od.value = entry.godz_od;
+  editForm.godz_do.value = entry.godz_do;
+  editForm.projekt.value = entry.projekt || '';
+  editForm.mieszkanie.value = entry.mieszkanie || '';
+  editForm.rodzaj.value = entry.rodzaj || '';
+  updateEditHoursSum();
+  editModal.hidden = false;
+}
+
+function closeEditModal() {
+  editModal.hidden = true;
+}
+
+document.querySelector('.modal-close').addEventListener('click', closeEditModal);
+document.querySelector('.btn-cancel').addEventListener('click', closeEditModal);
+editModal.querySelector('.modal-overlay').addEventListener('click', closeEditModal);
+
+function updateEditHoursSum() {
+  const m = minutesBetween(editForm.godz_od.value, editForm.godz_do.value);
+  document.getElementById('edit-hours-sum').textContent = 'Godziny: ' + (m ? formatH(m) : '—');
+}
+editForm.godz_od.addEventListener('change', updateEditHoursSum);
+editForm.godz_do.addEventListener('change', updateEditHoursSum);
+
+editForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = editForm['entry-id'].value;
+  const updated = {
+    data: editForm.data.value,
+    godz_od: editForm.godz_od.value,
+    godz_do: editForm.godz_do.value,
+    minuty: minutesBetween(editForm.godz_od.value, editForm.godz_do.value),
+    projekt: editForm.projekt.value.trim(),
+    mieszkanie: editForm.mieszkanie.value.trim(),
+    rodzaj: editForm.rodzaj.value.trim(),
+    updated: new Date().toISOString()
+  };
+  
+  const errors = validateEntry(updated);
+  if (errors.length) { toast('❌ ' + errors[0]); return; }
+  
+  const existing = await idbGet('entries', id);
+  const merged = { ...existing, ...updated };
+  
+  await idbPut('entries', merged);
+  
+  const token = await getSetting('github_token');
+  if (token) {
+    try {
+      await GITHUB_DB.setToken(token);
+      await GITHUB_DB.updateEntry(id, updated);
+      toast('✅ Zaktualizowano (GitHub + Local)');
+    } catch (e) {
+      toast('✅ Zaktualizowano lokalnie');
+    }
+  } else {
+    toast('✅ Zaktualizowano');
+  }
+  
+  closeEditModal();
+  renderTable();
+});
 
 // ====== Eksport ======
 async function buildWorkbook() {
@@ -279,10 +406,10 @@ function download(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 document.getElementById('btn-export-xlsx').addEventListener('click', async () => {
-  const b = await exportBlob('xlsx'); download(b, `karta-pracy_${todayISO()}.xlsx`); toast('Pobrano .xlsx');
+  const b = await exportBlob('xlsx'); download(b, `karta-pracy_${todayISO()}.xlsx`); toast('✅ Pobrano .xlsx');
 });
 document.getElementById('btn-export-csv').addEventListener('click', async () => {
-  const b = await exportBlob('csv'); download(b, `karta-pracy_${todayISO()}.csv`); toast('Pobrano .csv');
+  const b = await exportBlob('csv'); download(b, `karta-pracy_${todayISO()}.csv`); toast('✅ Pobrano .csv');
 });
 
 // ====== Email ======
@@ -293,22 +420,50 @@ document.getElementById('btn-email').addEventListener('click', async () => {
   const subject = `Karta pracy – ${todayISO()}`;
   const body = `W załączniku karta pracy do ${todayISO()}.`;
 
-  // 1) Web Share API z plikami (Android/Chrome)
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({ files: [file], title: subject, text: body });
-      toast('Otwarto udostępnianie');
+      toast('✅ Otwarto udostępnianie');
       return;
-    } catch(e) { /* user cancel */ }
+    } catch(e) { }
   }
-  // 2) Fallback: pobierz plik + otwórz mailto (załącznik trzeba dodać ręcznie)
   download(blob, file.name);
   const mailto = `mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + '\n\n(Dodaj pobrany plik jako załącznik.)')}`;
   location.href = mailto;
 });
 
-// ====== OneDrive (Microsoft Graph przez MSAL implicit flow) ======
-// Aplikacja używa MSAL.js Browser (ładowana lazy) i przesyła plik do /drive/root:/Work Log/karta-pracy.xlsx:/content
+// ====== GitHub Integration ======
+document.getElementById('btn-github-connect').addEventListener('click', async () => {
+  const token = document.getElementById('set-github-token').value.trim();
+  if (!token) { toast('❌ Wpisz GitHub token'); return; }
+  
+  try {
+    await GITHUB_DB.setToken(token);
+    await GITHUB_DB.sync();
+    toast('✅ Połączono z GitHub');
+    renderSettings();
+  } catch (e) {
+    toast('❌ Błąd: ' + e.message);
+  }
+});
+
+document.getElementById('btn-github-disconnect').addEventListener('click', async () => {
+  await GITHUB_DB.clearToken();
+  toast('✅ Rozłączono z GitHub');
+  renderSettings();
+});
+
+document.getElementById('btn-sync-now').addEventListener('click', async () => {
+  try {
+    await GITHUB_DB.sync();
+    toast('✅ Zsynchronizowano');
+    renderTable();
+  } catch (e) {
+    toast('❌ Błąd sync: ' + e.message);
+  }
+});
+
+// ====== OneDrive ======
 const MSAL_CLIENT_ID_KEY = 'msal_client_id';
 const MSAL_TOKEN_KEY = 'msal_token';
 const MSAL_EXP_KEY   = 'msal_exp';
@@ -324,12 +479,11 @@ async function onedriveLogin() {
   let clientId = await getSetting(MSAL_CLIENT_ID_KEY);
   if (!clientId) {
     clientId = prompt(
-      'Aby łączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\n\nJeśli nie masz, możesz to pominąć i używać eksportu lokalnego.'
+      'Aby łączyć z OneDrive, podaj Client ID aplikacji Microsoft (rejestracja w Azure Portal → App registrations, Redirect URI = ta strona).\n\nJeśli nie masz, możesz to pominąć i użyć innej metody.'
     );
     if (!clientId) return null;
     await setSetting(MSAL_CLIENT_ID_KEY, clientId.trim());
   }
-  // MSAL implicit flow w oknie popup (uwaga: implicit flow jest mniej bezpieczny — rozważ Authorization Code + PKCE)
   const redirect = location.origin + location.pathname;
   const state = Math.random().toString(36).slice(2);
   const nonce = Math.random().toString(36).slice(2);
@@ -342,7 +496,7 @@ async function onedriveLogin() {
               `&state=${encodeURIComponent(state)}` +
               `&nonce=${encodeURIComponent(nonce)}`;
   const w = window.open(url, 'onedrive_login', 'width=480,height=720');
-  if (!w) { toast('Popup zablokowany'); return null; }
+  if (!w) { toast('❌ Popup zablokowany'); return null; }
   return new Promise(resolve => {
     const t = setInterval(async () => {
       try {
@@ -356,7 +510,7 @@ async function onedriveLogin() {
           await setSetting(MSAL_EXP_KEY, Date.now() + expIn*1000);
           clearInterval(t); w.close(); resolve(token);
         }
-      } catch(e) { /* cross-origin – ignoruj aż do powrotu */ }
+      } catch(e) { }
     }, 400);
   });
 }
@@ -379,8 +533,7 @@ async function maybeAutoSyncOneDrive() {
   try {
     const blob = await exportBlob('xlsx');
     await onedriveUpload(blob, 'karta-pracy.xlsx');
-    toast('Zapisano kopię w OneDrive');
-  } catch(e) { toast('Błąd OneDrive: '+e.message); }
+  } catch(e) { }
 }
 
 document.getElementById('btn-onedrive').addEventListener('click', async () => {
@@ -389,13 +542,13 @@ document.getElementById('btn-onedrive').addEventListener('click', async () => {
     if (!tok) return;
     const blob = await exportBlob('xlsx');
     await onedriveUpload(blob, 'karta-pracy.xlsx');
-    toast('Zapisano w OneDrive');
+    toast('✅ Zapisano w OneDrive');
     renderSettings();
-  } catch(e) { toast(e.message); }
+  } catch(e) { toast('❌ ' + e.message); }
 });
 document.getElementById('btn-onedrive-connect').addEventListener('click', async () => {
   const t = await onedriveLogin();
-  if (t) toast('Połączono z OneDrive');
+  if (t) toast('✅ Połączono z OneDrive');
   renderSettings();
 });
 document.getElementById('btn-onedrive-disconnect').addEventListener('click', async () => {
@@ -403,27 +556,32 @@ document.getElementById('btn-onedrive-disconnect').addEventListener('click', asy
   await setSetting(MSAL_EXP_KEY, 0);
   await setSetting(MSAL_CLIENT_ID_KEY, null);
   renderSettings();
-  toast('Rozłączono');
+  toast('✅ Rozłączono');
 });
 
-// ====== Ustawienia – UI ======
+// ====== Ustawienia ======
 async function renderSettings() {
   document.getElementById('set-imie').value = await getSetting('imie','') || '';
   document.getElementById('set-email').value = await getSetting('email','') || '';
   document.getElementById('set-onedrive-folder').value = await getSetting('onedrive_folder','/Work Log');
+  
+  const ghToken = await getSetting('github_token');
+  document.getElementById('set-github-token').value = ghToken ? '••••••••' : '';
+  document.getElementById('github-status').textContent = 'GitHub: ' + (ghToken ? '✅ Połączony' : '❌ Niepołączony');
+  
   const tok = await getSetting(MSAL_TOKEN_KEY);
-  document.getElementById('onedrive-status').textContent = 'OneDrive: ' + (tok ? 'połączony' : 'niepołączony');
+  document.getElementById('onedrive-status').textContent = 'OneDrive: ' + (tok ? '✅ Połączony' : '❌ Niepołączony');
 
   await reloadShortcuts();
   const list = document.getElementById('shortcuts-list');
   if (!shortcutsCache.length) {
-    list.innerHTML = '<div class="hint">Brak skrótów. Dodaj pierwszy niżej – np. klucz <code>okno</code>, rozwinięcie „regulacja okna PCV”.</div>';
+    list.innerHTML = '<div class="hint">Brak skrótów. Dodaj pierwszy niżej – np. klucz <code>okno</code>, rozwinięcie „regulacja okna PCV".</div>';
   } else {
     list.innerHTML = shortcutsCache.map(s => `
       <div class="shortcut-row" data-id="${s.id}">
         <div class="k">${escapeHTML(s.key)}</div>
         <div class="v">${escapeHTML(s.value)}</div>
-        <button aria-label="Usuń">✕</button>
+        <button type="button" aria-label="Usuń">✕</button>
       </div>
     `).join('');
     list.querySelectorAll('.shortcut-row').forEach(row => {
@@ -441,12 +599,13 @@ document.getElementById('set-onedrive-folder').addEventListener('change', e => s
 document.getElementById('btn-add-shortcut').addEventListener('click', async () => {
   const k = document.getElementById('new-shortcut-key').value.trim().toLowerCase();
   const v = document.getElementById('new-shortcut-val').value.trim();
-  if (!k || !v) { toast('Podaj słowo-klucz i rozwinięcie'); return; }
+  if (!k || !v) { toast('❌ Podaj słowo-klucz i rozwinięcie'); return; }
   await idbPut('shortcuts', { key: k, value: v });
   document.getElementById('new-shortcut-key').value = '';
   document.getElementById('new-shortcut-val').value = '';
   await reloadShortcuts();
   renderSettings();
+  toast('✅ Dodano skrót');
 });
 
 document.getElementById('btn-backup').addEventListener('click', async () => {
@@ -462,6 +621,7 @@ document.getElementById('btn-backup').addEventListener('click', async () => {
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   download(blob, `worklog-backup_${todayISO()}.json`);
+  toast('✅ Backup pobrany');
 });
 document.getElementById('btn-import').addEventListener('click', () => document.getElementById('import-file').click());
 document.getElementById('import-file').addEventListener('change', async (e) => {
@@ -469,30 +629,32 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
   const text = await f.text();
   try {
     const data = JSON.parse(text);
-    if (Array.isArray(data.entries)) for (const x of data.entries) { delete x.id; await idbPut('entries', x); }
+    if (Array.isArray(data.entries)) for (const x of data.entries) { delete x.id; await idbPut('entries', { id: Date.now().toString() + Math.random(), ...x }); }
     if (Array.isArray(data.shortcuts)) for (const x of data.shortcuts) { delete x.id; await idbPut('shortcuts', x); }
     if (data.settings) for (const [k,v] of Object.entries(data.settings)) await setSetting(k,v);
-    toast('Zaimportowano');
+    toast('✅ Zaimportowano');
     renderSettings();
-  } catch(err) { toast('Błąd importu: '+err.message); }
+  } catch(err) { toast('❌ Błąd importu: '+err.message); }
   e.target.value = '';
 });
 
 document.getElementById('btn-wipe').addEventListener('click', async () => {
   if (!confirm('Na pewno wyczyścić wszystkie wpisy? Ustawienia i skróty pozostaną.')) return;
   await idbClear('entries');
-  toast('Wyczyszczono');
+  const token = await getSetting('github_token');
+  if (token) {
+    try {
+      await GITHUB_DB.setToken(token);
+      await GITHUB_DB.wipeAll();
+    } catch (e) { }
+  }
+  toast('✅ Wyczyszczono');
+  renderTable();
 });
-
-// ====== Utils ======
-function escapeHTML(s) {
-  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-}
 
 // ====== Start ======
 (async function(){
   await openDB();
   await reloadShortcuts();
-  // jeśli aplikacja odebrała redirect MSAL w głównym oknie – nic nie rób, popup obsługuje
   show('cover');
 })();
