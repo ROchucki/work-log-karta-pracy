@@ -21,7 +21,7 @@
       <button class="btn" data-go="table">Tabela</button>
       <button class="btn" data-go="settings">Ustawienia</button>
     </div>
-    <div class="cover-hint">Przeciągnij w dół, aby dodać do ekranu głównego (menu przeglądarki → „Dodaj do ekranu głównego”).</div>
+    <div class="cover-hint">Przeciągnij w dół, aby dodać do ekranu głównego (menu przeglądarki → „Dodaj do ekranu głównego").</div>
   </div>
 </section>
 
@@ -84,7 +84,7 @@
       <input type="date" id="filter-from" />
       <input type="date" id="filter-to" />
     </div>
-    <div class="summary" id="summary">Wpisów: 0 · Godziny: 0</div>
+    <div class="summary" id="summary">Wpisów: 0 · Godziny: 0 h</div>
   </div>
 
   <div class="table-wrap">
@@ -111,10 +111,26 @@
   <header class="topbar">
     <button class="icon-btn" data-go="cover" aria-label="Wróć">←</button>
     <h1>Ustawienia</h1>
-    <span></span>
+    <button class="icon-btn theme-toggle" aria-label="Zmień motyw" title="Dark/Light mode">🌙</button>
   </header>
 
   <div class="form">
+    <h3>GitHub Integration</h3>
+    <div class="hint">Dane będą synchronizowane z repozytorium GitHub (worklog-data.json).</div>
+    <label>GitHub Personal Access Token (PAT)
+      <input type="password" id="set-github-token" placeholder="ghp_..." />
+      <div class="hint">Potrzebujesz tokenu z uprawnieniami repo. <a href="https://github.com/settings/tokens/new" target="_blank">Wygeneruj tutaj</a></div>
+    </label>
+    <div class="row-2">
+      <button type="button" class="btn" id="btn-github-connect">Połącz GitHub</button>
+      <button type="button" class="btn" id="btn-github-disconnect">Rozłącz</button>
+    </div>
+    <div id="github-status" class="hint">GitHub: ❌ Niepołączony</div>
+    <button type="button" class="btn" id="btn-sync-now">Synchronizuj teraz</button>
+
+    <hr />
+
+    <h3>Profil</h3>
     <label>Imię (domyślne)
       <input type="text" id="set-imie" placeholder="np. Jan" />
     </label>
@@ -132,12 +148,12 @@
       <button type="button" class="btn" id="btn-onedrive-connect">Połącz OneDrive</button>
       <button type="button" class="btn" id="btn-onedrive-disconnect">Rozłącz</button>
     </div>
-    <div id="onedrive-status" class="hint">OneDrive: niepołączony</div>
+    <div id="onedrive-status" class="hint">OneDrive: ❌ Niepołączony</div>
 
     <hr />
 
     <h3>Skróty słów-kluczy</h3>
-    <div class="hint">Wpisujesz np. <code>okno</code> w polu „Rodzaj prac”, a aplikacja pokaże podpowiedzi zdefiniowane tutaj. Skróty można też dodać jednym kliknięciem z formularza wpisu.</div>
+    <div class="hint">Wpisujesz np. <code>okno</code> w polu „Rodzaj prac", a aplikacja pokaże podpowiedzi zdefiniowane tutaj.</div>
 
     <div id="shortcuts-list" class="shortcuts-list"></div>
 
@@ -159,82 +175,56 @@
   </div>
 </section>
 
+<!-- MODAL EDYCJI -->
+<div id="edit-modal" class="modal" hidden>
+  <div class="modal-overlay"></div>
+  <div class="modal-content">
+    <header class="modal-header">
+      <h2>Edytuj wpis</h2>
+      <button type="button" class="modal-close" aria-label="Zamknij">✕</button>
+    </header>
+
+    <form id="edit-form" class="form">
+      <input type="hidden" name="entry-id" />
+
+      <label>Data
+        <input type="date" name="data" required />
+      </label>
+
+      <div class="row-2">
+        <label>Godz. od
+          <input type="time" name="godz_od" required />
+        </label>
+        <label>Godz. do
+          <input type="time" name="godz_do" required />
+        </label>
+      </div>
+      <div class="hint"><span id="edit-hours-sum">Godziny: —</span></div>
+
+      <label>Projekt
+        <input type="text" name="projekt" />
+      </label>
+
+      <label>Mieszkanie
+        <input type="text" name="mieszkanie" />
+      </label>
+
+      <label>Rodzaj wykonywanych prac
+        <textarea name="rodzaj" rows="3"></textarea>
+      </label>
+
+      <div class="row-2">
+        <button type="button" class="btn btn-cancel">Anuluj</button>
+        <button type="submit" class="btn primary">Zapisz zmiany</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="github-db.js"></script>
 <script src="app.js"></script>
-<script data-pplx-inline-edit>
-(function(){
-  if(window===window.top)return;
-  function inlineAll(orig,clone){
-    if(orig.nodeType!==1)return;
-    try{
-      var cs=getComputedStyle(orig);
-      var t='';
-      for(var i=0;i<cs.length;i++){t+=cs[i]+':'+cs.getPropertyValue(cs[i])+';';}
-      clone.style.cssText=t;
-    }catch(e){}
-    var oc=orig.children,cc=clone.children;
-    for(var j=0;j<oc.length&&j<cc.length;j++){inlineAll(oc[j],cc[j]);}
-  }
-  function stripExternal(clone){
-    var imgs=clone.querySelectorAll('img');
-    for(var i=0;i<imgs.length;i++){
-      var s=imgs[i].getAttribute('src');
-      if(s&&!s.startsWith('data:'))imgs[i].removeAttribute('src');
-    }
-    var all=clone.querySelectorAll('*');
-    for(var i=0;i<all.length;i++){
-      var st=all[i].style.cssText;
-      if(st&&st.indexOf('url(')>=0){
-        all[i].style.cssText=st.replace(/url\(["']?(?!data:)[^)"']*["']?\)/gi,'none');
-      }
-    }
-  }
-  var scrollRaf=0;
-  function emitScroll(){
-    scrollRaf=0;
-    var x=window.scrollX||window.pageXOffset||0;
-    var y=window.scrollY||window.pageYOffset||0;
-    window.parent.postMessage({type:'INLINE_EDIT_SCROLL',scrollX:x,scrollY:y},'*');
-  }
-  window.addEventListener('scroll',function(){
-    if(scrollRaf)return;
-    scrollRaf=requestAnimationFrame(emitScroll);
-  },{passive:true,capture:true});
-  emitScroll();
-  window.addEventListener('message',function(e){
-    if(!e.data||e.data.type!=='INLINE_EDIT_CAPTURE_REQUEST')return;
-    var scrollX=window.scrollX||window.pageXOffset||0;
-    var scrollY=window.scrollY||window.pageYOffset||0;
-    var w=window.innerWidth,h=window.innerHeight;
-    try{
-      var clone=document.documentElement.cloneNode(true);
-      var rm=clone.querySelectorAll('script,link[rel="stylesheet"],style');
-      for(var i=0;i<rm.length;i++){rm[i].remove();}
-      inlineAll(document.documentElement,clone);
-      stripExternal(clone);
-      var html=new XMLSerializer().serializeToString(clone);
-      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'">'
-        +'<foreignObject width="100%" height="100%">'
-        +'<div xmlns="http://www.w3.org/1999/xhtml" style="width:'+w+'px;height:'+h+'px;overflow:hidden">'
-        +'<div style="transform:translate(-'+scrollX+'px,-'+scrollY+'px);transform-origin:top left">'
-        +html+'</div></div></foreignObject></svg>';
-      var svgUrl='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
-      var img=new Image();
-      img.onload=function(){
-        var c=document.createElement('canvas');c.width=w;c.height=h;
-        c.getContext('2d').drawImage(img,0,0);
-        window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:c.toDataURL('image/png'),scrollX:scrollX,scrollY:scrollY},'*');
-      };
-      img.onerror=function(){
-        window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:null,scrollX:scrollX,scrollY:scrollY},'*');
-      };
-      img.src=svgUrl;
-    }catch(err){
-      window.parent.postMessage({type:'INLINE_EDIT_SCREENSHOT_RESULT',dataUrl:null,scrollX:scrollX,scrollY:scrollY},'*');
-    }
-  });
-})();
-</script></body>
+</body>
 </html>
