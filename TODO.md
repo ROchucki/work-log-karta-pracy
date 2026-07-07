@@ -1,0 +1,1 @@
+- Testowa zmiana na TODO.md do nauki git diff
